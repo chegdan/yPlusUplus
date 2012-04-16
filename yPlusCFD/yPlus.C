@@ -135,6 +135,7 @@ int main(int argc, char *argv[])
 const volVectorField& centers = mesh.C();
 const surfaceVectorField& faceCenters = mesh.Cf();
 
+Info<<"  Finding uTau values throughout domain.  This will take a while."<<endl;
 	forAll(uTau, cellI){
 
 
@@ -158,7 +159,8 @@ const surfaceVectorField& faceCenters = mesh.Cf();
 
 				//compare the values
 				//if( cellFaceDist == yTemp){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	}
-				if( diffDist <= matchTol){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	}
+				//if the fraction difference is less than or equal to the match tolerance, search no further.
+				if( diffDist <= matchTol){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	break;}
 	
 					}
 			}	
