@@ -39,7 +39,6 @@ Description
     ::  writes fields of y+ and U+ to the corresponding time directory
 
 \*---------------------------------------------------------------------------*/
-
 #include "fvCFD.H"
 #include "incompressible/singlePhaseTransportModel/singlePhaseTransportModel.H"
 #include "RASModel.H"
@@ -53,7 +52,29 @@ int main(int argc, char *argv[])
 {
     timeSelector::addOptions();
 
+    Foam::argList::addOption
+    (
+        "tolerance",
+        "matchTolerance",
+        "specify a matching tolerance fraction of cell-to-face distance and y (default 0.001)"
+    );
+
     #include "setRootCase.H"
+
+    scalar matchTolerance = 0;
+    scalar matchTol = 1;
+
+    if (args.optionReadIfPresent("tolerance", matchTolerance))
+    {
+        matchTol = matchTolerance;
+        Info<< "Using cell distance to y match tolerance fraction of " << matchTol << nl << endl;
+    }else{
+        matchTol = 0.001;
+        Info<< "Using default cell-to-face distance to y match tolerance fraction of " << matchTol << nl << endl;
+    }
+
+
+
     #include "createTime.H"
     instantList timeDirs = timeSelector::select0(runTime, args);
     #include "createMesh.H"
@@ -137,7 +158,7 @@ const surfaceVectorField& faceCenters = mesh.Cf();
 
 				//compare the values
 				//if( cellFaceDist == yTemp){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	}
-				if( diffDist <= 0.0001){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	}
+				if( diffDist <= matchTol){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	}
 	
 					}
 			}	
