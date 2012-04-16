@@ -137,7 +137,7 @@ const surfaceVectorField& faceCenters = mesh.Cf();
 
 				//compare the values
 				//if( cellFaceDist == yTemp){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	}
-				if( diffDist <= 0.001){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	}
+				if( diffDist <= 0.0001){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	}
 	
 					}
 			}	
