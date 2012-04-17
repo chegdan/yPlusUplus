@@ -59,10 +59,18 @@ int main(int argc, char *argv[])
         "specify a matching tolerance fraction of cell-to-face distance and y (default 0.001)"
     );
 
+    argList::addBoolOption
+    (
+        "noWrite",
+        "do not write the y+, u+, and uTau fields and only calculate the min, max, and average. "
+    );
+
     #include "setRootCase.H"
 
     scalar matchTolerance = 0;
     scalar matchTol = 1;
+
+    bool noWrite = args.optionFound("noWrite");
 
     if (args.optionReadIfPresent("tolerance", matchTolerance))
     {
@@ -82,7 +90,7 @@ int main(int argc, char *argv[])
     forAll(timeDirs, timeI)
     {
         runTime.setTime(timeDirs[timeI], timeI);
-
+        Info<< "Time = " << runTime.timeName() << endl;
         fvMesh::readUpdateState state = mesh.readUpdate();
 
         wallDist y(mesh, true);
@@ -124,9 +132,17 @@ int main(int argc, char *argv[])
                    *mag(U.boundaryField()[patchi].snGrad())
                     );
 
+		const scalarField& uTauTemp = uTau.boundaryField()[patchi];
+
                 Info<< "  y+ for Patch " << patchi
                     << " named " << currPatch.name() << ":" 
                     << " min: " << min(YpTemp) << " max: " << max(YpTemp)
+                    << " average: " << average(YpTemp) 
+		    << nl << endl;
+                Info<< "  uTau for Patch " << patchi
+                    << " named " << currPatch.name() << ":" 
+                    << " min: " << min(uTauTemp) << " max: " << max(uTauTemp)
+                    << " average: " << average(uTauTemp) 
 		    << nl << endl;
             }
         }
@@ -135,19 +151,21 @@ int main(int argc, char *argv[])
 const volVectorField& centers = mesh.C();
 const surfaceVectorField& faceCenters = mesh.Cf();
 
-Info<<"  Finding uTau values throughout domain.  This will take a while."<<endl;
+	//go through all the cells in the mesh
 	forAll(uTau, cellI){
 
-
+		//loop over all the patches
 		forAll(patches, patchi){
             		const fvPatch& currPatch = patches[patchi];
-	
+			
+			//loop through all the faces on that patch
 			label nFaces = mesh.boundaryMesh()[patchi].size();
         
+			//if this patch is a wall...
 			if(isA<wallFvPatch>(currPatch)){
 				for(int facei = 0; facei<nFaces; facei++){
 
-				//dimensionedScalar cellFaceDist("cellFaceDist",dimensionSet(0,0,0,0,0,0,0),scalar(1));
+				//calculated distance from the current cell to a face on a wall patch
 				scalar cellFaceDist ;
 
 				cellFaceDist = Foam::sqrt(sqr(centers[cellI].x()-faceCenters.boundaryField()[patchi][facei].x()) + sqr(centers[cellI].y()-faceCenters.boundaryField()[patchi][facei].y())+ sqr(centers[cellI].z()-faceCenters.boundaryField()[patchi][facei].z()));
@@ -155,40 +173,36 @@ Info<<"  Finding uTau values throughout domain.  This will take a while."<<endl;
 				//convert the y value for comparison
 				scalar yTemp = y[cellI];
 
+				//fraction difference between our y (i.e. closest perpendicular distance to wall patch) and our seach for the closest wall face
 				scalar diffDist = abs(cellFaceDist - yTemp)/max(abs(cellFaceDist),SMALL);
 
-				//compare the values
-				//if( cellFaceDist == yTemp){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	}
 				//if the fraction difference is less than or equal to the match tolerance, search no further.
 				if( diffDist <= matchTol){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	break;}
 	
-					}
-			}	
-		}
+				}//end for loop over faces 
+			}//end if statement checking isA wall 
+		}//end loop over patches
+	}//end loop over uTau cells
 
-
-	}
-//uTau.write();
+	//true y+ for arbitrary geometry
         yPlus = y.y() * uTau / RASModel->nu();
 
+	//dummy variable holding velocity units
 	dimensionedScalar UUnits ( "UUnits", dimensionSet(0,1,-1,0,0), 1.0 ); 
 
-	uPlus = U / stabilise(uTau, SMALL*UUnits);
-	
-	/*forAll(uPlus, cellI){
-	
-        	uPlus[cellI].x() = U[cellI].x() / max(uTau[cellI],SMALL);
-       		uPlus[cellI].y() = U[cellI].y() / max(uTau[cellI],SMALL);
-        	uPlus[cellI].z() = U[cellI].z() / max(uTau[cellI],SMALL);
+	//true uPlus over arbitrary geometry
+	uPlus = U / stabilise(uTau, SMALL*UUnits);//used to fix divide by zero error if uTau is zero
+	      
+	if(noWrite){
+		Info << "  noWrite option selected, nothing written." << nl <<endl;
+	}else{
+        	Info << "  Writing yPlus and uPlus to corresponding fields." << nl <<endl;
+        	yPlus.write();
+        	uPlus.write();
+		uTau.write();
+	}
 
-	}*/
-       
-        Info << "Writing yPlus and uPlus to corresponding fields." << nl <<endl;
-        yPlus.write();
-        uPlus.write();
-	uTau.write();
-
-    }
+    }//end loop over time directories
 
     Info<< "End\n" << endl;
 
