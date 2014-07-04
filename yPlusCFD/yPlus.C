@@ -2,16 +2,16 @@
   =========                 |
   \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
    \\    /   O peration     |
-    \\  /    A nd           | Copyright (C) 1991-2009 OpenCFD Ltd.
+    \\  /    A nd           | Copyright (C) 2011 OpenFOAM Foundation
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
 License
     This file is part of OpenFOAM.
 
-    OpenFOAM is free software; you can redistribute it and/or modify it
-    under the terms of the GNU General Public License as published by the
-    Free Software Foundation; either version 2 of the License, or (at your
-    option) any later version.
+    OpenFOAM is free software: you can redistribute it and/or modify it
+    under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
 
     OpenFOAM is distributed in the hope that it will be useful, but WITHOUT
     ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
@@ -19,32 +19,29 @@ License
     for more details.
 
     You should have received a copy of the GNU General Public License
-    along with OpenFOAM; if not, write to the Free Software Foundation,
-    Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA
+    along with OpenFOAM.  If not, see <http://www.gnu.org/licenses/>.
 
 Application
-    plusPostRANS
+    yPlus
 
 Description
+    Calculates and reports yPlus for all wall patches, for the specified times.
 
-    calculates y+ and u+ fields for wall-bounded flows computed with
-    one of the available low-Re RANS (no wall function!) turbulence 
-    models. More specifically it
+    Default behaviour assumes operating in incompressible mode.
+    Use the -compressible option for compressible RAS cases.
 
-    :: 	calculates and outputs y+ (avg., min., max.) based on the 
-	velocity gradient at the wall  
-
-    ::	calculates and outputs the wall averaged friction velocity 
-
-    ::  writes fields of y+ and U+ to the corresponding time directory
+    Copyright 2013 Daniel Wei
 
 \*---------------------------------------------------------------------------*/
+
 #include "fvCFD.H"
 #include "incompressible/singlePhaseTransportModel/singlePhaseTransportModel.H"
-#include "RASModel.H"
-#include "LESModel.H"
-#include "nearWallDist.H"
+#include "incompressible/turbulenceModel/turbulenceModel.H"
+#include "fluidThermo.H"
+#include "compressible/turbulenceModel/turbulenceModel.H"
+#include "compressible/RAS/RASModel/RASModel.H"
 #include "wallDist.H"
+#include "wallFvPatch.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -52,61 +49,229 @@ int main(int argc, char *argv[])
 {
     timeSelector::addOptions();
 
-    Foam::argList::addOption
+    argList::addBoolOption
     (
-        "tolerance",
-        "matchTolerance",
-        "specify a matching tolerance fraction of cell-to-face distance and y (default 0.001)"
+        "compressible",
+        "calculate compressible y+"
     );
 
     argList::addBoolOption
     (
-        "noWrite",
-        "do not write the y+, u+, and uTau fields and only calculate the min, max, and average. "
+        "writeY",
+        "write wall distance files"
     );
 
-    #include "setRootCase.H"
+    argList::addBoolOption
+    (
+        "writeYPlus",
+        "write yPlus files"
+    );
 
-    scalar matchTolerance = 0;
-    scalar matchTol = 1;
+    argList::addBoolOption
+    (
+        "uTauInfo",
+        "Show uTau infor, used in channelFlow post-process"
+    );
 
-    bool noWrite = args.optionFound("noWrite");
-
-    if (args.optionReadIfPresent("tolerance", matchTolerance))
-    {
-        matchTol = matchTolerance;
-        Info<< "Using cell distance to y match tolerance fraction of " << matchTol << nl << endl;
-    }else{
-        matchTol = 0.001;
-        Info<< "Using default cell-to-face distance to y match tolerance fraction of " << matchTol << nl << endl;
-    }
-
-
-
-    #include "createTime.H"
+#   include "setRootCase.H"
+#   include "createTime.H"
     instantList timeDirs = timeSelector::select0(runTime, args);
-    #include "createMesh.H"
+#   include "createMesh.H"
+
+    const bool compressible = args.optionFound("compressible");
+    const bool writeY = args.optionFound("writeY");
+    const bool writeYPlus = args.optionFound("writeYPlus");
+    const bool uTauInfo = args.optionFound("uTauInfo");
 
     forAll(timeDirs, timeI)
     {
         runTime.setTime(timeDirs[timeI], timeI);
         Info<< "Time = " << runTime.timeName() << endl;
-        fvMesh::readUpdateState state = mesh.readUpdate();
 
-        wallDist y(mesh, true);
-
-        if (timeI == 0 || state != fvMesh::UNCHANGED)
+        //-Wall distance
+        //-y has values on all mesh cells
+        if (writeY)
         {
-            Info<< "Calculating wall distance\n" <<endl;
-            Info<< "Writing wall distance to field " << y.name() << nl << endl;
-            y.write();
+            fvMesh::readUpdateState state = mesh.readUpdate();
+            if (timeI == 0 || state != fvMesh::UNCHANGED)
+            {
+                Info<< "Calculating wall distance\n" << endl;
+                wallDist y(mesh, true);
+                Info<< "Writing wall distance to field " << y.name() << nl << endl;
+                y.write();
+            }
         }
 
-	#include "createFields.H"
+        //-wallDistanceOnPatch only has values on wall patch cells
+        // volScalarField wallDistanceOnPatch
+        // (
+        //     IOobject
+        //     (
+        //         "wallDistanceOnPatch",
+        //         runTime.timeName(),
+        //         mesh,
+        //         IOobject::NO_READ,
+        //         IOobject::NO_WRITE
+        //     ),
+        //     mesh,
+        //     dimensionedScalar("wallDistanceOnPatch", dimLength, 0.0)
+        // );
+
+        //-yPlus only has values on wall patch cells
+        volScalarField yPlus
+        (
+            IOobject
+            (
+                "yPlus",
+                runTime.timeName(),
+                mesh,
+                IOobject::NO_READ,
+                IOobject::NO_WRITE
+            ),
+            mesh,
+            dimensionedScalar("yPlus", dimless, 0.0)
+        );
+
+        //-uTau only has values on wall patch cells
+        volScalarField uTau
+        (
+            IOobject
+            (
+                "uTau",
+                runTime.timeName(),
+                mesh,
+                IOobject::NO_READ,
+                IOobject::NO_WRITE
+            ),
+            mesh,
+            dimensionedScalar("uTau", dimVelocity, 0.0)
+        );
+
+        Info<< "Reading field U\n" << endl;
+        volVectorField U
+        (
+            IOobject
+            (
+                "U",
+                runTime.timeName(),
+                mesh,
+                IOobject::MUST_READ,
+                IOobject::NO_WRITE
+            ),
+            mesh
+        );
+
+        volScalarField muEff
+        (
+            IOobject
+            (
+                "muEff",
+                runTime.timeName(),
+                mesh,
+                IOobject::NO_READ,
+                IOobject::NO_WRITE
+            ),
+            mesh,
+            dimensionedScalar("muEff", dimensionSet(1,-1,-1,0,0,0,0), 0.0)
+        );
+        volScalarField muLam
+        (
+            IOobject
+            (
+                "muLam",
+                runTime.timeName(),
+                mesh,
+                IOobject::NO_READ,
+                IOobject::NO_WRITE
+            ),
+            mesh,
+            dimensionedScalar("muLam", dimensionSet(1,-1,-1,0,0,0,0), 0.0)
+        );
+        volScalarField nuEff
+        (
+            IOobject
+            (
+                "nuEff",
+                runTime.timeName(),
+                mesh,
+                IOobject::NO_READ,
+                IOobject::NO_WRITE
+            ),
+            mesh,
+            dimensionedScalar("nuEff", dimensionSet(0,2,-1,0,0,0,0), 0.0)
+        );
+        volScalarField nuLam
+        (
+            IOobject
+            (
+                "nuLam",
+                runTime.timeName(),
+                mesh,
+                IOobject::NO_READ,
+                IOobject::NO_WRITE
+            ),
+            mesh,
+            dimensionedScalar("nuLam", dimensionSet(0,2,-1,0,0,0,0), 0.0)
+        );
+
+        if (compressible)
+        {
+            autoPtr<fluidThermo> pThermo
+            (
+                fluidThermo::New(mesh)
+            );
+            fluidThermo& thermo = pThermo();
+
+            volScalarField rho
+            (
+                IOobject
+                (
+                    "rho",
+                    runTime.timeName(),
+                    mesh,
+                    IOobject::READ_IF_PRESENT,
+                    IOobject::AUTO_WRITE
+                ),
+                thermo.rho()
+            );
+
+            #include "compressibleCreatePhi.H"
+
+            autoPtr<compressible::turbulenceModel> comModel
+            (
+                compressible::turbulenceModel::New
+                (
+                    rho,
+                    U,
+                    phi,
+                    thermo
+                )
+            );
+
+            muEff=comModel->muEff();
+            muLam=comModel->mu();
+        }
+        else
+        {
+#           include "createPhi.H"
+
+            singlePhaseTransportModel laminarTransport(U, phi);
+
+            autoPtr<incompressible::turbulenceModel> incModel
+            (
+                incompressible::turbulenceModel::New(U, phi, laminarTransport)
+            );
+
+            nuEff=incModel->nuEff();
+            nuLam=incModel->nu();
+        }
+
+        volScalarField::GeometricBoundaryField d = nearWallDist(mesh).y();
 
         const fvPatchList& patches = mesh.boundary();
-                     
-	Info<< "Summary: " << nl << endl;
+        
+        dimensionedScalar uTauAvg("uTauAvg", dimVelocity, 0);
+        scalar nPatch = 0;
 
         forAll(patches, patchi)
         {
@@ -114,95 +279,103 @@ int main(int argc, char *argv[])
 
             if (isA<wallFvPatch>(currPatch))
             {
-                yPlusTemp.boundaryField()[patchi] =
-                    d[patchi]
-                   *sqrt
+                if (compressible)
+                {
+                    autoPtr<basicThermo> pThermo
                     (
-                        RASModel->nu()().boundaryField()[patchi]
-                       *mag(U.boundaryField()[patchi].snGrad())
-                    )
-                   /RASModel->nu()().boundaryField()[patchi];
-                
-		const scalarField& YpTemp = yPlusTemp.boundaryField()[patchi];
+                        basicThermo::New(mesh)
+                    );
+                    basicThermo& thermo = pThermo();
 
-                uTau.boundaryField()[patchi] =
-                    sqrt
+                    volScalarField rho
                     (
-		    RASModel->nu()()
-                   *mag(U.boundaryField()[patchi].snGrad())
+                        IOobject
+                        (
+                            "rho",
+                            runTime.timeName(),
+                            mesh,
+                            IOobject::READ_IF_PRESENT,
+                            IOobject::AUTO_WRITE
+                        ),
+                        thermo.rho()
                     );
 
-		const scalarField& uTauTemp = uTau.boundaryField()[patchi];
+                    // wallDistanceOnPatch.boundaryField()[patchi] = d[patchi];
+                    yPlus.boundaryField()[patchi] =
+                        d[patchi]
+                       *sqrt
+                        (
+                            rho.boundaryField()[patchi]
+                           *muEff.boundaryField()[patchi]
+                           *mag(U.boundaryField()[patchi].snGrad())
+                        )
+                       /muLam.boundaryField()[patchi];
 
-                Info<< "  y+ for Patch " << patchi
-                    << " named " << currPatch.name() << ":" 
-                    << " min: " << min(YpTemp) << " max: " << max(YpTemp)
-                    << " average: " << average(YpTemp) 
-		    << nl << endl;
-                Info<< "  uTau for Patch " << patchi
-                    << " named " << currPatch.name() << ":" 
-                    << " min: " << min(uTauTemp) << " max: " << max(uTauTemp)
-                    << " average: " << average(uTauTemp) 
-		    << nl << endl;
+                    uTau.boundaryField()[patchi] =
+                        sqrt
+                        (
+                            rho.boundaryField()[patchi]
+                           *muEff.boundaryField()[patchi]
+                           *mag(U.boundaryField()[patchi].snGrad())
+                        );
+                }
+                else
+                {
+                    // wallDistanceOnPatch.boundaryField()[patchi] = d[patchi];
+                    yPlus.boundaryField()[patchi] =
+                        d[patchi]
+                       *sqrt
+                        (
+                            nuEff.boundaryField()[patchi]
+                           *mag(U.boundaryField()[patchi].snGrad())
+                        )
+                       /nuLam.boundaryField()[patchi];
+
+                    uTau.boundaryField()[patchi] =
+                        sqrt
+                        (
+                            nuEff.boundaryField()[patchi]
+                           *mag(U.boundaryField()[patchi].snGrad())
+                        );
+                }
+
+                const scalarField& Yp = yPlus.boundaryField()[patchi];
+
+                // Mean uTau estimation 
+                uTauAvg.value() += average(uTau.boundaryField()[patchi]);
+                nPatch ++;
+
+                Info<< "Patch " << patchi
+                    << " named " << currPatch.name() << nl
+                    << " d   : min: " << min(d[patchi])
+                    << " max: " << max(d[patchi])
+                    << " average: " << average(d[patchi]) << nl 
+                    << " uTau: min: " << min(uTau.boundaryField()[patchi])
+                    << " max: " << max(uTau.boundaryField()[patchi])
+                    << " average: " << average(uTau.boundaryField()[patchi])<<nl 
+                    << " y+  : min: " << min(Yp) << " max: " << max(Yp)
+                    << " average: " << average(Yp) << nl << endl;
+
             }
         }
 
+        // Average over all walls, used in channelFlow post-processing
+        uTauAvg /= nPatch; 
+        if (uTauInfo)
+        {
+            Info << "Average friction velocity uTau is: "
+                 << uTauAvg.value()
+                 << " (averaged over " << nPatch << " wall(s))"
+                 << nl <<endl;
+        }
 
-const volVectorField& centers = mesh.C();
-const surfaceVectorField& faceCenters = mesh.Cf();
-
-	//go through all the cells in the mesh
-	forAll(uTau, cellI){
-
-		//loop over all the patches
-		forAll(patches, patchi){
-            		const fvPatch& currPatch = patches[patchi];
-			
-			//loop through all the faces on that patch
-			label nFaces = mesh.boundaryMesh()[patchi].size();
-        
-			//if this patch is a wall...
-			if(isA<wallFvPatch>(currPatch)){
-				for(int facei = 0; facei<nFaces; facei++){
-
-				//calculated distance from the current cell to a face on a wall patch
-				scalar cellFaceDist ;
-
-				cellFaceDist = Foam::sqrt(sqr(centers[cellI].x()-faceCenters.boundaryField()[patchi][facei].x()) + sqr(centers[cellI].y()-faceCenters.boundaryField()[patchi][facei].y())+ sqr(centers[cellI].z()-faceCenters.boundaryField()[patchi][facei].z()));
-
-				//convert the y value for comparison
-				scalar yTemp = y[cellI];
-
-				//fraction difference between our y (i.e. closest perpendicular distance to wall patch) and our seach for the closest wall face
-				scalar diffDist = abs(cellFaceDist - yTemp)/max(abs(cellFaceDist),SMALL);
-
-				//if the fraction difference is less than or equal to the match tolerance, search no further.
-				if( diffDist <= matchTol){ uTau[cellI] = uTau.boundaryField()[patchi][facei];	break;}
-	
-				}//end for loop over faces 
-			}//end if statement checking isA wall 
-		}//end loop over patches
-	}//end loop over uTau cells
-
-	//true y+ for arbitrary geometry
-        yPlus = y.y() * uTau / RASModel->nu();
-
-	//dummy variable holding velocity units
-	dimensionedScalar UUnits ( "UUnits", dimensionSet(0,1,-1,0,0), 1.0 ); 
-
-	//true uPlus over arbitrary geometry
-	uPlus = U / stabilise(uTau, SMALL*UUnits);//used to fix divide by zero error if uTau is zero
-	      
-	if(noWrite){
-		Info << "  noWrite option selected, nothing written." << nl <<endl;
-	}else{
-        	Info << "  Writing yPlus and uPlus to corresponding fields." << nl <<endl;
-        	yPlus.write();
-        	uPlus.write();
-		uTau.write();
-	}
-
-    }//end loop over time directories
+        if (writeYPlus)
+        {
+            Info<< "Writing yPlus to field "
+                << yPlus.name() << nl << endl;
+            yPlus.write();
+        }
+    }
 
     Info<< "End\n" << endl;
 
