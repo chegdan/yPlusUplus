@@ -1,8 +1,0 @@
-#!/bin/bash
-
-#---script to compile all of the point dumping utilities and misc utilities
-
-cd yPlusCFD
-wmake
-
-#-----end script---
