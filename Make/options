@@ -15,3 +15,4 @@ EXE_LIBS = \
     -lincompressibleLESModels \
     -lfiniteVolume \
     -lgenericPatchFields
+    
